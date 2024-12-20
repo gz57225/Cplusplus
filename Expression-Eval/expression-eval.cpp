@@ -4,6 +4,9 @@
 #include <sstream>
 #include <cctype>
 #include <stdexcept>
+#include <cmath> // For pow function
+
+#include "logger.cpp"
 
 // Enum to represent the type of node
 enum class NodeType {
@@ -36,7 +39,7 @@ public:
     }
 };
 
-// Operator node to represent operators (+, -, *, /)
+// Operator node to represent operators (+, -, *, /, ^, u+, u-)
 class OperatorNode : public Node {
     char op;
     std::unique_ptr<Node> left;
@@ -45,7 +48,8 @@ public:
     void print(std::string tab_lvl = "") const override {
         std::cout << tab_lvl << "Operator: " << op << std::endl;
         std::cout << tab_lvl << "Left:" << std::endl;
-        left ->print(tab_lvl + "  ");
+        if (left) left->print(tab_lvl + "  ");
+        else std::cout << tab_lvl + "  (null)" << std::endl;
         std::cout << tab_lvl << "Right:" << std::endl;
         right->print(tab_lvl + "  ");
     }
@@ -54,7 +58,7 @@ public:
         : op(oper), left(std::move(l)), right(std::move(r)) {}
 
     double evaluate() const override {
-        double leftVal = left->evaluate();
+        double leftVal = left ? left->evaluate() : 0; // Unary operators have no left node
         double rightVal = right->evaluate();
         switch (op) {
             case '+': return leftVal + rightVal;
@@ -63,6 +67,9 @@ public:
             case '/': 
                 if (rightVal == 0) throw std::runtime_error("Division by zero");
                 return leftVal / rightVal;
+            case '^': return std::pow(leftVal, rightVal);
+            case 'u': return -rightVal; // Unary negative
+            case 'p': return +rightVal; // Unary positive
             default: throw std::runtime_error("Unknown operator");
         }
     }
@@ -78,7 +85,13 @@ std::unique_ptr<Node> parsePrimary(std::istringstream& iss) {
     char token;
     iss >> token;
 
-    if (std::isdigit(token) || token == '.' || token == '-' || token == '+') {
+    if (token == '-') { // Unary minus
+        auto right = parsePrimary(iss);
+        return std::make_unique<OperatorNode>('u', nullptr, std::move(right));
+    } else if (token == '+') { // Unary plus
+        auto right = parsePrimary(iss);
+        return std::make_unique<OperatorNode>('p', nullptr, std::move(right));
+    } else if (std::isdigit(token) || token == '.') {
         iss.putback(token);
         double value;
         iss >> value;
@@ -94,13 +107,26 @@ std::unique_ptr<Node> parsePrimary(std::istringstream& iss) {
     }
 }
 
-// Function to parse multiplication and division
-std::unique_ptr<Node> parseTerm(std::istringstream& iss) {
+// Function to parse exponents
+std::unique_ptr<Node> parseExponent(std::istringstream& iss) {
     auto left = parsePrimary(iss);
 
     char token;
-    while (iss >> token && (token == '*' || token == '/')) {
+    while (iss >> token && token == '^') {
         auto right = parsePrimary(iss);
+        left = std::make_unique<OperatorNode>(token, std::move(left), std::move(right));
+    }
+    if (iss) iss.putback(token); // Put back the last token if not '^'
+    return left;
+}
+
+// Function to parse multiplication and division
+std::unique_ptr<Node> parseTerm(std::istringstream& iss) {
+    auto left = parseExponent(iss);
+
+    char token;
+    while (iss >> token && (token == '*' || token == '/')) {
+        auto right = parseExponent(iss);
         left = std::make_unique<OperatorNode>(token, std::move(left), std::move(right));
     }
     if (iss) iss.putback(token); // Put back the last token if not '*' or '/'
@@ -129,7 +155,6 @@ int main() {
         try {
             auto root = parseExpression(iss);
             root->print();
-            std::cout << std::flush;
             std::cout << "Result: " << root->evaluate() << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "Error: " << e.what() << std::endl;
